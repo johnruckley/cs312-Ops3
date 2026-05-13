@@ -1,0 +1,2 @@
+[mains]
+tester ansible_host=54.227.76.88 ansible_user=ubuntu ansible_ssh_private_key_file=./../cs-312-ps.pem

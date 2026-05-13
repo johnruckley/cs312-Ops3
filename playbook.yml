@@ -1,0 +1,135 @@
+---
+- name: EC2 Setup
+  hosts: all
+  remote_user: ubuntu
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    - name: Install required system packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - unzip
+          - netcat-openbsd
+          - awscli
+        state: present
+        update_cache: yes
+
+    - name: Create apt keyrings directory
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Download Docker GPG apt Key safely
+      get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
+
+    - name: Add Docker Repository
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_facts['distribution_release'] }} stable"
+        state: present
+        update_cache: yes
+        filename: docker
+
+    - name: Install Docker Engine
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+
+    - name: Ensure Docker service is started and enabled
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Apply Docker group changes
+      meta: reset_connection
+
+    - name: Create .aws dir
+      file:
+        path: /home/ubuntu/.aws
+        state: directory
+        mode: '0755'
+
+    - name: Add aws creds
+      copy:
+        dest: /home/ubuntu/.aws/credentials
+        content: |
+          [default]
+          aws_access_key_id=ASIAWS3PGEK4TJCZSVWN
+          aws_secret_access_key=P0p274pH5FvD1a0ZOzSsMX8QceE45sXEongKShF5
+          aws_session_token=IQoJb3JpZ2luX2VjEHIaCXVzLXdlc3QtMiJHMEUCIAcCfX3UzJuIixSmBnF9XhSxvvjFBtcNvl3KKjZvMQsbAiEA+6Zy6fE+IuwEyT4Bx2pO51XrVenFIL/BxD7oaARcPYoqsgIIOxABGgw0NTI4MTUzNjQ3OTMiDPz+1X0hujziQieC3CqPAjCBzILJgWYPca5qzfPTBOTD4K51fHRiZUbXPMPGSLbAeR0GmUZEukFo0jexTaWpxEKUb87o4zI5dSu9Tt4Bqte+svTAizkUNrpP6JpyL+QWz9412h4nX0E71p1QjPEmz2x54ehP5T1lttxBxgItfS4+OiITUVApBUkdA45TRvdPcauj7OqPjzoy+ujt4Auoq4R/EJbpmJRdIicyE9vvxXfCknMdHAieNtKUqsr+NfD2kjYGZFQn0l3CTl5iHzqdzXwVZGGDOzC8SgXWVeAsBDNhONA7sAqWVCrzCQQ+M//+j0G4RJ14k4nBQbnkwdd53NECUmHUQIArHLEN1iRGLlFZXSKXVJlX1X0L2WFAAUYwu7KP0AY6nQHOEIjanmC+YMdNV6aJmgTZNr7CcBi3nfbINVynbC4s+1hXA6YQn8dKtTltHS4/Gru0iwkmk9A4B75VnRallQMxO4ogt1s1QG2WjkrYhi3x1g5AYtjw1gQec1SS3uqS0BpDFpplUSGmJ5aalqtX04TBlL4HQj+AnabEXWiaQCHnidTiGLPTWh6soywESSGH+EcRHcnnn+uoD3o3nuHE
+
+    - name: Retrieve aws account ID
+      shell: aws sts get-caller-identity --query Account --output text
+      become: no
+      register: ACCOUNTID
+
+
+    - name: Authenticate Docker to ECR
+      shell: |
+        aws ecr get-login-password --region us-east-1 | \
+        docker login --username AWS --password-stdin \
+        {{ ACCOUNTID.stdout }}.dkr.ecr.us-east-1.amazonaws.com
+      become: no
+
+    - name: Create persistent data directory
+      file:
+        path: /home/ubuntu/data26.1.2
+        state: directory
+        mode: '0777'
+      become: yes
+
+    - name: Check if world data already exists
+      stat:
+        path: /home/ubuntu/data26.1.2/world
+      register: world_file
+
+    - name: Grab world backup from S3 during recovery
+      shell: aws s3 cp s3://cs312-op2-ruckleyj/26.1.2/4-26-26 ./4-26-26.tar && tar -xvf 4-26-26.tar
+      become: no
+      when: not world_file.stat.exists
+      ignore_errors: yes
+
+    - name: Create the Docker Compose configuration file
+      copy:
+        dest: /home/ubuntu/docker-compose.yaml
+        content: |
+          services:
+            minecraft:
+              image: {{ ACCOUNTID.stdout }}.dkr.ecr.us-east-1.amazonaws.com/cs312-op2:mc-26.1.2-v1
+              container_name: minecraft-server
+              tty: true
+              stdin_open: true
+              ports:
+                - "25565:25565"
+              volumes:
+                - ./data26.1.2:/data
+              environment:
+                EULA: "TRUE"
+                MOTD: "ruckleyj - cs312"
+              restart: unless-stopped
+      become: no
+
+    - name: Start the Minecraft server using Docker Compose
+      shell: "docker compose up -d"
+      args:
+        chdir: /home/ubuntu/
+      become: no
