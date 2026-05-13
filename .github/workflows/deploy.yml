@@ -77,7 +77,7 @@ jobs:
       - name: Tag and Push Image to ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: your-ecr-repo-name # <--- Change this to your ECR Repo name
+          ECR_REPOSITORY: cs312-op2
           IMAGE_TAG: ${{ github.ref_name }} # Grabs the git tag name (e.g., v1.0.0)
         run: |
           # Tag image for ECR
